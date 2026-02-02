@@ -385,7 +385,7 @@ class GPT(nn.Module):
             group["initial_lr"] = group["lr"]
         return optimizer
 
-    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean', drop_top_loss_pct=0.0, drop_random=False):
         B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
@@ -415,8 +415,29 @@ class GPT(nn.Module):
 
         if targets is not None:
             # training: given the targets, compute and return the loss
-            # TODO experiment with chunked cross-entropy?
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
+            if drop_top_loss_pct > 0:
+                # Experimental: drop tokens from loss computation
+                flat_logits = logits.view(-1, logits.size(-1))
+                flat_targets = targets.view(-1)
+                per_token_loss = F.cross_entropy(flat_logits, flat_targets, ignore_index=-1, reduction='none')
+                valid_mask = (flat_targets != -1)
+                
+                # Decide which tokens to keep (threshold calc doesn't need grad)
+                with torch.no_grad():
+                    if drop_random:
+                        # Ablation: drop random tokens instead of top-loss tokens
+                        keep_mask = (torch.rand_like(per_token_loss) < (1.0 - drop_top_loss_pct)) & valid_mask
+                    else:
+                        # Default: drop top X% highest-loss tokens
+                        valid_losses = per_token_loss[valid_mask]
+                        threshold = torch.quantile(valid_losses, 1.0 - drop_top_loss_pct)
+                        keep_mask = (per_token_loss <= threshold) & valid_mask
+                
+                # Weighted mean: dropped tokens contribute zero to loss and gradient
+                keep_weights = keep_mask.float()
+                loss = (per_token_loss * keep_weights).sum() / keep_weights.sum()
+            else:
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
             return loss
         else:
             # inference: just return the logits directly

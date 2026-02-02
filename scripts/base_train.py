@@ -63,6 +63,12 @@ parser.add_argument("--warmup-ratio", type=float, default=0.0, help="ratio of it
 parser.add_argument("--warmdown-ratio", type=float, default=0.5, help="ratio of iterations for LR warmdown")
 parser.add_argument("--final-lr-frac", type=float, default=0.0, help="final LR as fraction of initial LR")
 parser.add_argument("--resume-from-step", type=int, default=-1, help="resume training from this step (-1 = disable)")
+# Experimental: drop top-loss tokens
+parser.add_argument("--drop-loss-start", type=float, default=0.0, help="starting pct of top-loss tokens to drop (e.g. 0.1 = 10%%)")
+parser.add_argument("--drop-loss-end", type=float, default=0.0, help="ending pct of top-loss tokens to drop (e.g. 0.0)")
+parser.add_argument("--drop-loss-warmup-ratio", type=float, default=0.02, help="ratio of training before drop-loss kicks in (default 2%%)")
+parser.add_argument("--drop-loss-decay-ratio", type=float, default=0.2, help="ratio of training to decay drop-loss from start to end")
+parser.add_argument("--drop-loss-random", action="store_true", help="ablation: drop random tokens instead of top-loss tokens")
 # Evaluation
 parser.add_argument("--eval-every", type=int, default=250, help="evaluate val bpb every N steps (-1 = disable)")
 parser.add_argument("--eval-tokens", type=int, default=20*524288, help="number of tokens to evaluate val loss on")
@@ -92,7 +98,8 @@ else:
 
 # wandb logging init
 use_dummy_wandb = args.run == "dummy" or not master_process
-wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
+
+wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="macbook-test", name=args.run, config=user_config)
 
 # Flash Attention status
 if HAS_FA3:
@@ -259,6 +266,21 @@ def get_muon_momentum(it):
 def get_weight_decay(it):
     return weight_decay_scaled * (1 - it / num_iterations)
 
+# Drop-loss scheduler: warmup (0%) -> start -> linearly decay to end
+def get_drop_loss_pct(it):
+    if args.drop_loss_start == 0 and args.drop_loss_end == 0:
+        return 0.0
+    warmup_iters = round(args.drop_loss_warmup_ratio * num_iterations)
+    decay_iters = round(args.drop_loss_decay_ratio * num_iterations)
+    # Phase 1: warmup period - no dropping
+    if it < warmup_iters:
+        return 0.0
+    # Phase 2: decay from start to end
+    decay_progress = (it - warmup_iters) / decay_iters if decay_iters > 0 else 1.0
+    if decay_progress >= 1.0:
+        return args.drop_loss_end
+    return args.drop_loss_start + decay_progress * (args.drop_loss_end - args.drop_loss_start)
+
 # -----------------------------------------------------------------------------
 # Loop state (variables updated by the training loop)
 
@@ -370,9 +392,10 @@ while True:
     # evaluate the gradient
     synchronize()
     t0 = time.time()
+    drop_pct = get_drop_loss_pct(step)
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
-            loss = model(x, y)
+            loss = model(x, y, drop_top_loss_pct=drop_pct, drop_random=args.drop_loss_random)
         train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps # each .backward() is a grad sum => normalize loss here
         loss.backward()
@@ -414,7 +437,8 @@ while True:
     else:
         eta_str = ""
     epoch = dataloader_state_dict["epoch"]
-    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
+    drop_pct_str = f" | drop: {drop_pct:.1%}" if drop_pct > 0 else ""
+    print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}{drop_pct_str}")
     if step % 100 == 0:
         log_data = {
             "step": step,
@@ -426,6 +450,7 @@ while True:
             "train/tok_per_sec": tok_per_sec,
             "train/mfu": mfu,
             "train/epoch": epoch,
+            "train/drop_loss_pct": drop_pct,
         }
         wandb_run.log(log_data)
 
