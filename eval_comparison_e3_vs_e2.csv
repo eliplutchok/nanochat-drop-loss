@@ -1,0 +1,23 @@
+Benchmark,Shots,Type,E2 Accuracy,E3 Accuracy,Diff (E3-E2),E2 Centered,E3 Centered,Diff (E3-E2)
+hellaswag_zeroshot,0,multiple_choice,0.4740,0.4534,-0.0206,0.2987,0.2712,-0.0275
+jeopardy,10,language_modeling,0.0960,0.0897,-0.0063,0.0960,0.0897,-0.0063
+bigbench_qa_wikidata,10,language_modeling,0.4840,0.4852,+0.0012,0.4840,0.4852,+0.0012
+arc_easy,10,multiple_choice,0.6660,0.6343,-0.0317,0.5547,0.5123,-0.0424
+arc_challenge,10,multiple_choice,0.3780,0.3447,-0.0333,0.1707,0.1263,-0.0444
+copa,0,multiple_choice,0.6600,0.6600,+0.0000,0.3200,0.3200,+0.0000
+commonsense_qa,10,multiple_choice,0.3020,0.2793,-0.0227,0.1275,0.0991,-0.0284
+piqa,10,multiple_choice,0.7100,0.6904,-0.0196,0.4200,0.3808,-0.0392
+openbook_qa,0,multiple_choice,0.3660,0.4020,+0.0360,0.1547,0.2027,+0.0480
+lambada_openai,0,language_modeling,0.3880,0.3837,-0.0043,0.3880,0.3837,-0.0043
+hellaswag,10,multiple_choice,0.4740,0.4584,-0.0156,0.2987,0.2778,-0.0209
+winograd,0,schema,0.6190,0.6667,+0.0477,0.2381,0.3333,+0.0952
+winogrande,0,schema,0.5900,0.5627,-0.0273,0.1800,0.1255,-0.0545
+bigbench_dyck_languages,10,language_modeling,0.1220,0.1310,+0.0090,0.1220,0.1310,+0.0090
+agi_eval_lsat_ar,3,multiple_choice,0.2739,0.2826,+0.0087,0.0924,0.1033,+0.0109
+bigbench_cs_algorithms,10,language_modeling,0.4440,0.3780,-0.0660,0.4440,0.3780,-0.0660
+bigbench_operators,10,language_modeling,0.1762,0.1762,+0.0000,0.1762,0.1762,+0.0000
+bigbench_repeat_copy_logic,10,language_modeling,0.0000,0.0000,+0.0000,0.0000,0.0000,+0.0000
+squad,10,language_modeling,0.3080,0.2770,-0.0310,0.3080,0.2770,-0.0310
+coqa,0,language_modeling,0.2440,0.2228,-0.0212,0.2440,0.2228,-0.0212
+boolq,10,multiple_choice,0.5700,0.6012,+0.0312,-0.1316,-0.0494,+0.0822
+bigbench_language_identification,10,multiple_choice,0.2340,0.2571,+0.0231,0.1573,0.1827,+0.0254
