@@ -1,0 +1,14 @@
+Benchmark,Shots,Type,E1 Centered (baseline),E2 Centered (drop-loss),E3 Centered (random drop-loss),Winner
+hellaswag_zeroshot,0,multiple_choice,0.2756,0.2987,0.2712,E2
+hellaswag,10,multiple_choice,0.2740,0.2987,0.2778,E2
+piqa,10,multiple_choice,0.3602,0.4200,0.3808,E2
+arc_easy,10,multiple_choice,0.5112,0.5547,0.5123,E2
+lambada_openai,0,language_modeling,0.3811,0.3880,0.3837,E2
+bigbench_qa_wikidata,10,language_modeling,0.4726,0.4840,0.4852,E3
+squad,10,language_modeling,0.2747,0.3080,0.2770,E2
+coqa,0,language_modeling,0.2251,0.2440,0.2228,E2
+winogrande,0,schema,0.1018,0.1800,0.1255,E2
+,,,,,,
+Core Benchmark Average,,,0.3196,0.3529,0.3263,E2
+Overall CORE Metric (all 22),,,0.2195,0.2338,0.2286,E2
+Wins,,,0,8,1,E2

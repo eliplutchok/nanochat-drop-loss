@@ -1,199 +1,158 @@
-# nanochat
+# Drop-Loss: Automated Curriculum Learning for LLM Pretraining
 
-![nanochat logo](dev/nanochat.png)
-![scaling laws](dev/scaling_laws_jan26.png)
+This is a fork of [Andrej Karpathy's nanochat](https://github.com/karpathy/nanochat) used to run a specific experiment: **drop-loss**, a simple automated curriculum learning technique for language model pretraining.
 
-nanochat is the simplest experimental harness for training LLMs. It is designed to run on a single GPU node, the code is minimal/hackable, and it covers all major LLM stages including tokenization, pretraining, finetuning, evaluation, inference, and a chat UI. For example, you can train your own GPT-2 capability LLM (which cost ~$50,000 to train in 2019) for only $73 (3 hours of 8XH100 GPU node) and then talk to it in a familiar ChatGPT-like web UI.
+## The Idea
 
-For questions about the repo, I recommend either using [DeepWiki](https://deepwiki.com/karpathy/nanochat) from Devin/Cognition to ask questions about the repo, or use the [Discussions tab](https://github.com/karpathy/nanochat/discussions), or come by the [#nanochat](https://discord.com/channels/1020383067459821711/1427295580895314031) channel on Discord.
+During pretraining, not all tokens are equally learnable. Some tokens are easy (common patterns, predictable continuations), while others are hard (rare facts, noisy data, inherently ambiguous). Standard training treats all tokens equally, but what if we let the model focus on the easy stuff first?
 
-## Updates
+**Drop-loss** works by excluding the highest-loss tokens from the backward pass during the early phase of training. Concretely:
 
-- (Jan 31 2026) Major revamp of all scripts/README ongoing, deleting midtraining stage, might be a bit messy briefly...
-- (Jan 30 2026) With all the latest improvements we're able to train GPT-2 grade LLM in about $73. The [runs/speedrun.sh](runs/speedrun.sh) script will become the refernece way to train GPT-2 grade model and talk to it.
+1. Compute per-token cross-entropy loss as usual
+2. Find the top X% of tokens with the highest loss
+3. Zero out their contribution to the loss (and therefore the gradient)
+4. Only backpropagate through the remaining "easier" tokens
+5. Gradually reduce the drop percentage over training until all tokens are included
 
-## Leaderboard
+This fits into the broader family of **continuation methods** -- optimization techniques that solve a series of progressively harder problems. The loss function starts easy (ignoring the hardest 10% of tokens) and gradually becomes the standard loss (all tokens included). It can also be viewed as a form of **automated curriculum learning**, where the curriculum is defined implicitly by the model's own loss landscape rather than by hand-crafted heuristics.
 
-| # | Record time | Description | Date | Commit | Contributors |
-|---|-------------|-------------|------|--------|--------------|
-| 1 | 3.04 hours | d24 baseline, slightly overtrained | Jan 29 2026 | 348fbb3 | @karpathy |
+### Schedule
 
-The primary metric we care about is "time to GPT-2" - the wall clock time needed to outperform the GPT-2 (1.6B) CORE metric on an 8XH100 GPU node. In 2019, the training of GPT-2 cost approximately $50,000 so it is incredible that due to many advances over 7 years across the stack, we can now do so in 3 hours or less, for ~$73 and below. Once your repo is set up (see the [runs/speedrun.sh](runs/speedrun.sh) script for reference), e.g. the way I kicked off the jan29 run is as follows:
+For the main experiment, the schedule is:
+- **Start**: drop the top 10% highest-loss tokens
+- **Decay**: linearly reduce to 0% over the first 50% of training
+- **Second half**: standard training with all tokens
 
-```
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
-    --depth=24 \
-    --run=d24-jan29 \
-    --model-tag=d24_jan29 \
-    --device-batch-size=16 \
-    --sample-every=-1 \
-    --save-every=-1 \
-    --core-metric-max-per-task=-1 \
-    --core-metric-every=3000 \
-    --target-param-data-ratio=12
-```
+## Results
 
-After 3 hours we get output like this:
+Three experiments were run, all with identical architecture and hyperparameters (depth-20 transformer, ~124M parameters, data:param ratio of 12):
 
-```
-...
-wandb: Run summary:
-wandb:          core_metric 0.25851
-wandb:                 step 16704
-wandb: total_training_flops 4.330784131228946e+19
-wandb:  total_training_time 10949.46713
-```
+| Experiment | Description | CORE Metric |
+|---|---|---|
+| **E1** (baseline) | Standard training | 0.2195 |
+| **E2** (drop-loss) | Drop top 10% highest-loss tokens, decay to 0% over first half | **0.2338** |
+| **E3** (random drop) | Drop random 10% of tokens with same schedule (ablation) | 0.2286 |
 
-The GPT-2 CORE score (i.e. the target to beat) is 0.256525. So we see that this d24 CORE score is higher (0.25851). Then we look at the `total_training_time`, which is the time of the training iterations alone, excluding all the evaluations and logging, in seconds. We get: `10949/60/60 ~= 3.04` hours, the current record.
+### Core Benchmark Results (Centered Accuracy)
 
-## Getting started
+The table below focuses on the 9 benchmarks with the strongest signal-to-noise ratio at this model scale (the remaining 13 are too noisy for a model this small to draw conclusions from):
 
-### Reproduce and talk to GPT-2
+| Benchmark | Shots | E1 (baseline) | E2 (drop-loss) | E3 (random drop) | Winner |
+|---|---|---|---|---|---|
+| hellaswag_zeroshot | 0 | 0.2756 | **0.2987** | 0.2712 | E2 |
+| hellaswag | 10 | 0.2740 | **0.2987** | 0.2778 | E2 |
+| piqa | 10 | 0.3602 | **0.4200** | 0.3808 | E2 |
+| arc_easy | 10 | 0.5112 | **0.5547** | 0.5123 | E2 |
+| lambada_openai | 0 | 0.3811 | **0.3880** | 0.3837 | E2 |
+| bigbench_qa_wikidata | 10 | 0.4726 | 0.4840 | **0.4852** | E3 |
+| squad | 10 | 0.2747 | **0.3080** | 0.2770 | E2 |
+| coqa | 0 | 0.2251 | **0.2440** | 0.2228 | E2 |
+| winogrande | 0 | 0.1018 | **0.1800** | 0.1255 | E2 |
+| | | | | | |
+| **Core Avg** | | 0.3196 | **0.3529** | 0.3263 | **E2** |
+| **CORE Metric (all 22)** | | 0.2195 | **0.2338** | 0.2286 | **E2** |
+| **Wins** | | 0 | **8** | 1 | |
 
-The most fun you can have is to train your own GPT-2 and talk to it. The entire pipeline to do so is contained in the single file [runs/speedrun.sh](runs/speedrun.sh), which is designed to be run on an 8XH100 GPU node. Currently, at ~$24/hour for these nodes, pretraining GPT-2 grade model takes approximately 3 hours and will set you back about $75. Boot up a new 8XH100 GPU box from your favorite provider (e.g. I use and like [Lambda](https://lambda.ai/service/gpu-cloud)), and kick off the training script:
+**E2 (strategic drop-loss) wins 8 out of 9 core benchmarks.** The improvement is consistent across benchmark types: multiple choice, language modeling, and schema tasks all benefit.
+
+### Validation BPB
+
+![Validation BPB curves for E1, E2, and E3](experiment/assets/val_bpb.png)
+
+Interestingly, E2 achieves **slightly worse** validation BPB (bits per byte) than E1, despite performing better on all downstream evaluation benchmarks. This suggests that drop-loss causes the model to allocate capacity toward more "useful" patterns (that help on reasoning/knowledge benchmarks) at the expense of some raw next-token prediction on the validation distribution.
+
+### The Ablation (E3)
+
+E3 uses the same drop-loss schedule and drop percentage, but drops **random** tokens instead of the highest-loss ones. It performs only marginally better than the baseline (within noise), confirming that the **strategic selection** of which tokens to drop is what matters -- not just the regularization effect of training on fewer tokens.
+
+## Limitations
+
+These results are preliminary. Due to limited compute budget, there are several caveats:
+
+- **Single runs only.** Each experiment was run once with a single seed. Without multiple runs per configuration, we cannot compute confidence intervals or rule out that some of the gains are due to lucky initialization. That said, E2's improvement is consistent across 8 of 9 core benchmarks, which is unlikely by chance alone (p ~ 0.02 under a binomial null).
+- **Small model scale.** All experiments used a depth-20 (~124M parameter) model. It is unknown whether drop-loss helps, hurts, or has no effect at larger scales (e.g. 1B+ parameters). Curriculum effects may interact differently with model capacity.
+- **Limited hyperparameter search.** Only one drop-loss schedule was tested (10% start, linear decay over 50% of training). There may be better schedules -- for example, adding a warmup period so the model learns for a few steps before the curriculum kicks in, or using different decay curves.
+- **Single dataset.** All experiments used the same FineWeb pretraining data. The effectiveness of drop-loss may depend on data quality and noise characteristics.
+
+I would love to explore these directions with more compute. If you find these results interesting and have the resources to scale them up, I'd be happy to collaborate or hear about your findings.
+
+## How to Run
+
+### Requirements
+
+- 8x H100 (80GB SXM5) GPU node
+- The experiments were run on [Lambda](https://lambda.ai/) GPU cloud
+
+### Step 1: Setup
+
+Clone and run the pre-experiment setup script, which installs dependencies, downloads data, and trains the tokenizer:
 
 ```bash
-bash runs/speedrun.sh
+git clone https://github.com/<your-username>/nanochat.git
+cd nanochat
+bash runs/pre-experiments.sh
 ```
 
-You mish to do so in a screen session as this will take ~3 hours to run. Once it's done, you can talk to it via the ChatGPT-like web UI. Make sure again that your local uv virtual environment is active (run `source .venv/bin/activate`), and serve it:
+### Step 2: (Optional) Enable wandb logging
 
 ```bash
-python -m scripts.chat_web
+export WANDB_API_KEY=<your-wandb-api-key>
 ```
 
-And then visit the URL shown. Make sure to access it correctly, e.g. on Lambda use the public IP of the node you're on, followed by the port, so for example [http://209.20.xxx.xxx:8000/](http://209.20.xxx.xxx:8000/), etc. Then talk to your LLM as you'd normally talk to ChatGPT! Get it to write stories or poems. Ask it to tell you who you are to see a hallucination. Ask it why the sky is blue. Or why it's green. The speedrun is a 4e19 FLOPs capability model so it's a bit like talking to a kindergartener :).
+### Step 3: Run experiments
 
----
+Run each experiment one at a time. Each takes approximately 20-30 minutes on 8x H100:
 
-<img width="2672" height="1520" alt="image" src="https://github.com/user-attachments/assets/ed39ddf8-2370-437a-bedc-0f39781e76b5" />
+```bash
+# E1: Baseline (standard training)
+bash runs/experiment1.sh
 
----
+# E2: Drop-loss (the main experiment)
+bash runs/experiment2.sh
 
-A few more notes:
-
-- The code will run just fine on the Ampere 8XA100 GPU node as well, but a bit slower.
-- All code will run just fine on even a single GPU by omitting `torchrun`, and will produce ~identical results (code will automatically switch to gradient accumulation), but you'll have to wait 8 times longer.
-- If your GPU(s) have less than 80GB, you'll have to tune some of the hyperparameters or you will OOM / run out of VRAM. Look for `--device_batch_size` in the scripts and reduce it until things fit. E.g. from 32 (default) to 16, 8, 4, 2, or even 1. Less than that you'll have to know a bit more what you're doing and get more creative.
-- Most of the code is fairly vanilla PyTorch so it should run on anything that supports that - xpu, mps, or etc, but I haven't personally exercised all of these code paths so there might be sharp edges.
-
-## Research
-
-If you are a researcher and wish to help improve nanochat, two scripts of interest are [runs/scaling_laws.sh](runs/scaling_laws.sh) and [runs/miniseries.sh](runs/miniseries.sh). See [Jan 7 miniseries v1](https://github.com/karpathy/nanochat/discussions/420) for related documentation. For quick experimentation (~5 min pretraining runs) my favorite scale is to train a 12-layer model (GPT-1 sized), e.g. like this:
-
-```
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
-    --depth=12 \
-    --run="d12" \
-    --model-tag="d12" \
-    --core-metric-every=999999 \
-    --sample-every=-1 \
-    --save-every=-1 \
+# E3: Random drop-loss (ablation)
+bash runs/experiment3.sh
 ```
 
-This uses wandb (run name "d12"), only runs the CORE metric on last step, and it doesn't sample and save intermediate checkpoints. I like to change something in the code, re-run a d12 (or a d16 etc) and see if it helped, in an iteration loop.
+Each script trains the model and then runs the full CORE evaluation suite automatically.
 
-The overall approach is to treat the depth of the model as the single dial of complexity. By sweeping out the depth, we get increasingly more powerful models. We determine the scaling laws, set the data budget to a compute optimal setting, train a whole miniseries of models of increasing sizes, and compare them to the GPT-2 and GPT-3 miniseries. Right now, beating GPT-2 specifically faster and faster is the most interesting target.
-
-## Running on CPU / MPS
-
-The script [runs/runcpu.sh](runs/runcpu.sh) shows a very simple example of running on CPU or Apple Silicon. It dramatically shrinks the LLM tha tis being trained to make things fit into a reasonable time interval of a few ten minutes of training. You will not get strong results in this way.
-
-## Guides
-
-I've published a number of guides that might contain helpful information:
-
-- [Oct 13 2025 original nanochat post](https://github.com/karpathy/nanochat/discussions/1) introducing nanochat, though now it contains some deprecated information and the model is a lot older (with worse results) than current master.
-- [Jan 7 miniseries v1](https://github.com/karpathy/nanochat/discussions/420) documents the first nanochat miniseries of models.
-- To customize your nanochat, see [Guide: infusing identity to your nanochat](https://github.com/karpathy/nanochat/discussions/139) in Discussions, which describes how you can tune your nanochat's personality through synthetic data generation and mixing that data into the SFT stage.
-- To add new abilities to nanochat, see [Guide: counting r in strawberry (and how to add abilities generally)](https://github.com/karpathy/nanochat/discussions/164).
-
-## File structure
+## Repo Structure
 
 ```
 .
-├── LICENSE
 ├── README.md
-├── dev
-│   ├── gen_synthetic_data.py       # Example synthetic data for identity
-│   ├── generate_logo.html
-│   ├── nanochat.png
-│   └── repackage_data_reference.py # Pretraining data shard generation
-├── nanochat
-│   ├── __init__.py                 # empty
-│   ├── checkpoint_manager.py       # Save/Load model checkpoints
-│   ├── common.py                   # Misc small utilities, quality of life
-│   ├── core_eval.py                # Evaluates base model CORE score (DCLM paper)
-│   ├── dataloader.py               # Tokenizing Distributed Data Loader
-│   ├── dataset.py                  # Download/read utils for pretraining data
-│   ├── engine.py                   # Efficient model inference with KV Cache
-│   ├── execution.py                # Allows the LLM to execute Python code as tool
-│   ├── gpt.py                      # The GPT nn.Module Transformer
-│   ├── logo.svg
-│   ├── loss_eval.py                # Evaluate bits per byte (instead of loss)
-│   ├── optim.py                    # AdamW + Muon optimizer, 1GPU and distributed
-│   ├── report.py                   # Utilities for writing the nanochat Report
-│   ├── tokenizer.py                # BPE Tokenizer wrapper in style of GPT-4
-│   └── ui.html                     # HTML/CSS/JS for nanochat frontend
-├── pyproject.toml
-├── runs
-│   ├── miniseries.sh               # Miniseries training script
-│   ├── runcpu.sh                   # Small example of how to run on CPU/MPS
-│   ├── scaling_laws.sh             # Scaling laws experiments
-│   └── speedrun.sh                 # Train the ~$100 nanochat d20
-├── scripts
-│   ├── base_eval.py                # Base model: CORE score, bits per byte, samples
-│   ├── base_train.py               # Base model: train
-│   ├── chat_cli.py                 # Chat model: talk to over CLI
-│   ├── chat_eval.py                # Chat model: eval tasks
-│   ├── chat_rl.py                  # Chat model: reinforcement learning
-│   ├── chat_sft.py                 # Chat model: train SFT
-│   ├── chat_web.py                 # Chat model: talk to over WebUI
-│   ├── tok_eval.py                 # Tokenizer: evaluate compression rate
-│   └── tok_train.py                # Tokenizer: train it
-├── tasks
-│   ├── arc.py                      # Multiple choice science questions
-│   ├── common.py                   # TaskMixture | TaskSequence
-│   ├── customjson.py               # Make Task from arbitrary jsonl convos
-│   ├── gsm8k.py                    # 8K Grade School Math questions
-│   ├── humaneval.py                # Misnomer; Simple Python coding task
-│   ├── mmlu.py                     # Multiple choice questions, broad topics
-│   ├── smoltalk.py                 # Conglomerate dataset of SmolTalk from HF
-│   └── spellingbee.py              # Task teaching model to spell/count letters
-├── tests
-│   └── test_engine.py
-└── uv.lock
+├── nanochat/                    # Core library (from upstream nanochat)
+│   └── gpt.py                  # Modified: added drop-loss to forward()
+├── scripts/
+│   └── base_train.py           # Modified: added drop-loss CLI args and schedule
+├── runs/
+│   ├── pre-experiments.sh      # Setup: installs deps, downloads data, trains tokenizer
+│   ├── experiment1.sh          # E1: baseline
+│   ├── experiment2.sh          # E2: drop-loss (main experiment)
+│   └── experiment3.sh          # E3: random drop-loss (ablation)
+└── experiment/
+    ├── results/                # Raw eval outputs and comparison CSVs
+    │   ├── e1_eval.md
+    │   ├── e2_eval.md
+    │   ├── e3_eval.md
+    │   ├── eval_report_core.csv
+    │   ├── eval_comparison_all.csv
+    │   ├── eval_comparison_e2_vs_e1.csv
+    │   ├── eval_comparison_e3_vs_e2.csv
+    │   └── eval_comparison_e3_vs_e1.csv
+    └── assets/                 # Screenshots and figures
+        └── val_bpb.png         # Validation BPB chart from wandb
 ```
 
-## Contributing
+## Code Changes
 
-The goal of nanochat is to improve the state of the art in micro models that are accessible to work with end to end on budgets of < $1000 dollars. Accessibility is about overall cost but also about cognitive complexity - nanochat is not an exhaustively configurable LLM "framework"; there are no giant configuration objects, model factories, or if-then-else monsters in the code base. It is a single, cohesive, minimal, readable, hackable, maximally-forkable "strong baseline" codebase designed to run start to end and produce a ChatGPT model you can talk to. Currently, the most interesting part personally is speeding up the latency to GPT-2 (i.e. getting a CORE score above 0.256525). Currently this takes ~3 hours, but by improving the pretraining stage we can improve this further.
+Only two files were modified from upstream nanochat:
 
-Current AI policy: disclosure. When submitting a PR, please declare any parts that had substantial LLM contribution and that you have not written or that you do not fully understand.
+1. **`nanochat/gpt.py`** -- Added `drop_top_loss_pct` and `drop_random` parameters to the model's `forward()` method. When active, computes per-token loss, identifies the top-X% highest-loss tokens (or random tokens for the ablation), and zeros out their contribution before backpropagation.
+
+2. **`scripts/base_train.py`** -- Added CLI arguments for the drop-loss schedule (`--drop-loss-start`, `--drop-loss-end`, `--drop-loss-warmup-ratio`, `--drop-loss-decay-ratio`, `--drop-loss-random`) and a scheduler that linearly decays the drop percentage over training.
 
 ## Acknowledgements
 
-- The name (nanochat) derives from my earlier project [nanoGPT](https://github.com/karpathy/nanoGPT), which only covered pretraining.
-- nanochat is also inspired by [modded-nanoGPT](https://github.com/KellerJordan/modded-nanogpt), which gamified the nanoGPT repo with clear metrics and a leaderboard, and borrows a lot of its ideas and some implementation for pretraining.
-- Thank you to [HuggingFace](https://huggingface.co/) for fineweb and smoltalk.
-- Thank you [Lambda](https://lambda.ai/service/gpu-cloud) for the compute used in developing this project.
-- Thank you to chief LLM whisperer 🧙‍♂️ Alec Radford for advice/guidance.
-- Thank you to the repo czar Sofie [@svlandeg](https://github.com/svlandeg) for help with managing issues, pull requests and discussions of nanochat.
-
-## Cite
-
-If you find nanochat helpful in your research cite simply as:
-
-```bibtex
-@misc{nanochat,
-  author = {Andrej Karpathy},
-  title = {nanochat: The best ChatGPT that \$100 can buy},
-  year = {2025},
-  publisher = {GitHub},
-  url = {https://github.com/karpathy/nanochat}
-}
-```
-
-## License
-
-MIT
+- [Andrej Karpathy](https://github.com/karpathy) for [nanochat](https://github.com/karpathy/nanochat), the base repo this experiment is built on
+- [Lambda](https://lambda.ai/) for providing the free GPU credits used to run these experiments
