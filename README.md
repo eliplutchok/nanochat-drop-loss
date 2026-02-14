@@ -150,7 +150,17 @@ Only two files were modified from upstream nanochat:
 
 1. **`nanochat/gpt.py`** -- Added `drop_top_loss_pct` and `drop_random` parameters to the model's `forward()` method. When active, computes per-token loss, identifies the top-X% highest-loss tokens (or random tokens for the ablation), and zeros out their contribution before backpropagation.
 
-2. **`scripts/base_train.py`** -- Added CLI arguments for the drop-loss schedule (`--drop-loss-start`, `--drop-loss-end`, `--drop-loss-warmup-ratio`, `--drop-loss-decay-ratio`, `--drop-loss-random`) and a scheduler that linearly decays the drop percentage over training.
+2. **`scripts/base_train.py`** -- Added CLI arguments for the drop-loss schedule and a scheduler that linearly decays the drop percentage over training.
+
+### Drop-Loss Hyperparameters
+
+| Parameter | Description | Value Used | Reasoning |
+|---|---|---|---|
+| `--drop-loss-start` | Initial percentage of tokens to drop | 0.10 (10%) | Conservative enough to not starve the model of signal, but enough to meaningfully filter out the noisiest tokens |
+| `--drop-loss-end` | Final percentage of tokens to drop | 0.0 (0%) | By the end of training, the model should see all tokens -- the curriculum is a tool for the early phase, not a permanent filter |
+| `--drop-loss-decay-ratio` | Fraction of training over which to decay from start to end | 0.5 (50%) | Gives the curriculum enough time to have an effect without depriving the model of hard examples for too long |
+| `--drop-loss-warmup-ratio` | Fraction of training before dropping begins | 0.0 (none) | In this experiment, dropping starts from step 0. A short warmup (letting the model train normally first) may be better since the model is random at step 0 and can't meaningfully distinguish easy from hard tokens -- this is a direction for future work |
+| `--drop-loss-random` | Drop random tokens instead of highest-loss | flag (E3 only) | Ablation control to test whether strategic selection matters vs. random dropping |
 
 ## Acknowledgements
 
